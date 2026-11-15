@@ -1,0 +1,24 @@
+[Unit]
+Description=Robinhood Lighter fill hedger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hedge
+WorkingDirectory=/opt/auto-hedge
+EnvironmentFile=/opt/auto-hedge/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/auto-hedge/.venv/bin/auto-hedge --config /opt/auto-hedge/config.toml --live run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/auto-hedge
+
+[Install]
+WantedBy=multi-user.target

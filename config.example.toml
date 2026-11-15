@@ -1,0 +1,32 @@
+[state]
+# Both programs must use this SAME absolute directory on the VPS.
+directory = "/var/lib/auto-hedge"
+
+[source]
+url = "https://api.rh.lighter.xyz"
+chain_id = 466324
+account_index_env = "RH_ACCOUNT_INDEX"
+api_key_index_env = "RH_HEDGE_API_KEY_INDEX"
+private_key_env = "RH_HEDGE_API_PRIVATE_KEY"
+
+[target]
+url = "https://mainnet.zklighter.elliot.ai"
+chain_id = 304
+account_index_env = "CORE_ACCOUNT_INDEX"
+api_key_index_env = "CORE_HEDGE_API_KEY_INDEX"
+private_key_env = "CORE_HEDGE_API_PRIVATE_KEY"
+
+[execution]
+enabled = false
+max_slippage_bps = 30         # 30 bps = 0.30%, referenced to target best bid/ask
+heartbeat_timeout_seconds = 35 # existing guard polls every 10s; allow read latency
+backfill_seconds = 30
+confirm_timeout_seconds = 8   # total send + confirmation budget per hedge
+max_attempts = 3
+max_dust_seconds = 30
+max_backfill_pages = 100
+
+[markets]
+# Automatically hedge whichever RH perpetual limit order actually fills.
+# Same-symbol/equal-multiplier Core contract; actual filled BASE quantity, no fixed size.
+auto = true
