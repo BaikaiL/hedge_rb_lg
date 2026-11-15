@@ -81,7 +81,7 @@ async def execute(args) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Hedge Robinhood Lighter limit fills on Lighter Core")
+    p = argparse.ArgumentParser(description="Hedge Robinhood Lighter limit and market entry fills on Lighter Core")
     p.add_argument("--config", default="config.toml")
     p.add_argument("--env-file", default=".env")
     p.add_argument("--live", action="store_true")

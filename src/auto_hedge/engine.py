@@ -44,7 +44,7 @@ class Engine:
                 raise RuntimeError(f"{r.name}: max_order_base is below target precision")
             log.info("route=%s RH_market=%s Core_market=%s size_decimals=%s", r.name, s.index, t.index, t.size_decimals)
         if self.unavailable:
-            log.warning("RH perps without equivalent Core contract (a limit fill will pause hedging): %s", ",".join(sorted(self.unavailable)))
+            log.warning("RH perps without equivalent Core contract (an eligible fill will pause hedging): %s", ",".join(sorted(self.unavailable)))
 
     async def ingest(self, trade: dict) -> None:
         market = int(trade["market_id"])
@@ -79,9 +79,16 @@ class Engine:
                 oid = str(trade.get(f"{side}_id_str") or trade[f"{side}_id"])
                 cid = str(trade.get(f"{side}_client_id_str") or trade.get(f"{side}_client_id", 0))
                 order = await self.source.find_source_order(market, oid, cid)
-                if order["type"] == "limit":
+                eligible = order["type"] == "limit"
+                if order["type"] == "market":
+                    reduce_only = order.get("reduce_only")
+                    if not isinstance(reduce_only, bool):
+                        raise RuntimeError("cannot establish whether source market order is reduce-only")
+                    # The margin guard submits reduce-only market closes, not new entries.
+                    eligible = not reduce_only
+                if eligible:
                     if route.name in self.unavailable:
-                        raise RuntimeError(f"{route.name}: source limit fill has no equivalent active Core contract")
+                        raise RuntimeError(f"{route.name}: source {order['type']} fill has no equivalent active Core contract")
                     size = Decimal(trade["size"])
                     if not size.is_finite() or size <= 0:
                         raise ValueError("invalid fill size")

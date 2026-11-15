@@ -27,6 +27,6 @@ max_dust_seconds = 30
 max_backfill_pages = 100
 
 [markets]
-# Automatically hedge whichever RH perpetual limit order actually fills.
+# Automatically hedge RH perpetual limit and non-reduce-only market fills.
 # Same-symbol/equal-multiplier Core contract; actual filled BASE quantity, no fixed size.
 auto = true

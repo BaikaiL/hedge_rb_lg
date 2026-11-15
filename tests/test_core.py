@@ -47,8 +47,10 @@ def fill(tid=1, size="0.001", sell=False, **extra):
 
 
 @pytest.mark.parametrize("sell,expected", [(False, D("-0.001")), (True, D("0.001"))])
-def test_fill_direction_partial_and_duplicate(setup, sell, expected):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_fill_direction_partial_and_duplicate(setup, sell, expected, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     async def scenario():
         await e.ingest(fill(sell=sell))
         await e.ingest(fill(sell=sell))
@@ -62,8 +64,10 @@ def test_fill_direction_partial_and_duplicate(setup, sell, expected):
     run(scenario())
 
 
-def test_partial_ioc_only_retries_actual_remainder(setup):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_partial_ioc_only_retries_actual_remainder(setup, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     e.target.terminal.side_effect = [D("-0.0004"), D("-0.0006")]
     async def scenario():
         await e.ingest(fill())
@@ -73,8 +77,10 @@ def test_partial_ioc_only_retries_actual_remainder(setup):
     run(scenario())
 
 
-def test_ambiguous_submission_is_never_resent(setup):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_ambiguous_submission_is_never_resent(setup, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     e.target.submit.side_effect = TimeoutError()
     async def scenario():
         await e.ingest(fill())
@@ -91,8 +97,10 @@ def test_ambiguous_submission_is_never_resent(setup):
     run(scenario())
 
 
-def test_pause_between_quote_and_send_wins(setup):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_pause_between_quote_and_send_wins(setup, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     async def quote(*args):
         c.pause("liquidating")
         return D("100000")
@@ -105,8 +113,10 @@ def test_pause_between_quote_and_send_wins(setup):
     run(scenario())
 
 
-def test_old_epoch_not_rehedged_after_risk_flatten(setup):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_old_epoch_not_rehedged_after_risk_flatten(setup, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     async def scenario():
         await e.ingest(fill())
         c.pause("flatten")
@@ -119,14 +129,52 @@ def test_old_epoch_not_rehedged_after_risk_flatten(setup):
     run(scenario())
 
 
-def test_market_fills_and_self_trades_do_not_trigger(setup):
+def test_reduce_only_market_fills_and_self_trades_do_not_trigger(setup):
     e, c, s = setup
-    e.source.find_source_order.return_value = {"type": "market"}
+    e.source.find_source_order.return_value = {"type": "market", "reduce_only": True}
     async def scenario():
         await e.ingest(fill())
         await e.ingest(fill(2, ask_account_id=11))
         await e.hedge()
         e.target.submit.assert_not_called()
+        assert s.pending("BTC", 1) == 0
+        assert e.source.find_source_order.call_count == 1
+    run(scenario())
+
+
+@pytest.mark.parametrize("reduce_only", [None, "false", 0, 1])
+def test_market_order_with_unknown_reduce_only_flag_cannot_trigger(setup, reduce_only):
+    e, c, s = setup
+    e.source.find_source_order.return_value = {"type": "market", "reduce_only": reduce_only}
+    async def scenario():
+        with pytest.raises(RuntimeError, match="reduce-only"):
+            await e.ingest(fill())
+        await e.hedge()
+        e.target.submit.assert_not_called()
+        assert s.pending("BTC", 1) == 0
+    run(scenario())
+
+
+@pytest.mark.parametrize("order_type", ["stop-loss", "stop-loss-limit", "take-profit", "take-profit-limit", "twap", "twap-sub"])
+def test_conditional_and_twap_fills_do_not_trigger(setup, order_type):
+    e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
+    async def scenario():
+        await e.ingest(fill())
+        await e.hedge()
+        e.target.submit.assert_not_called()
+        assert s.pending("BTC", 1) == 0
+    run(scenario())
+
+
+def test_existing_reduce_only_limit_behavior_is_preserved(setup):
+    e, c, s = setup
+    e.source.find_source_order.return_value = {"type": "limit", "reduce_only": True}
+    async def scenario():
+        await e.ingest(fill())
+        await e.hedge()
+        assert e.target.submit.call_args.args[2] == D("-0.001")
+        assert s.pending("BTC", 1) == 0
     run(scenario())
 
 
@@ -232,8 +280,10 @@ def test_automatic_markets_follow_actual_symbol_and_size_without_caps(setup):
     run(scenario())
 
 
-def test_automatic_mode_never_silently_skips_unmatched_source_limit(setup):
+@pytest.mark.parametrize("order_type", ["limit", "market"])
+def test_automatic_mode_never_silently_skips_unmatched_source_fill(setup, order_type):
     e, c, s = setup
+    e.source.find_source_order.return_value = {"type": order_type, "reduce_only": False}
     e.cfg = replace(e.cfg, routes=(), auto_markets=True)
     e.source.markets = AsyncMock(return_value={
         **e.source_markets, "RH_ONLY": Market("RH_ONLY", 8, 4, 2, D("0.001"), D(10), D(1))})

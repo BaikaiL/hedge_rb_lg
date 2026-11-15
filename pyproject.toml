@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rh-lighter-auto-hedge"
-version = "0.1.0"
-description = "Robinhood Lighter limit fills hedged on Lighter Core"
+version = "0.1.1"
+description = "Robinhood Lighter limit and market entry fills hedged on Lighter Core"
 requires-python = ">=3.11"
 dependencies = [
   "lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@38a34672e7cb43c67d807ece25f125fda2dfdecf",
