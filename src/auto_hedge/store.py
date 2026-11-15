@@ -76,15 +76,23 @@ class Store:
 
     def new_attempt(self, route: str, epoch: int, requested: Decimal) -> int:
         with self.db:
-            last = int(self.get("last_client_id") or "0")
-            # 2^48-1 is the protocol limit. Dedicated API slot avoids other writers.
-            cid = max(int(time.time() * 1000) * 100 + 50, last + 1)
-            if cid > (1 << 48) - 1:
-                raise RuntimeError("client order ID exceeds protocol range")
+            cid = self._allocate_client_id()
             self.db.execute("INSERT INTO attempts(id,route,epoch,requested,status,created) VALUES(?,?,?,?,?,?)",
                             (cid, route, epoch, str(requested), "uncertain", time.time()))
-            self.db.execute("INSERT OR REPLACE INTO meta VALUES('last_client_id',?)", (str(cid),))
         return cid
+
+    def _allocate_client_id(self) -> int:
+        last = int(self.get("last_client_id") or "0")
+        cid = max(int(time.time() * 1000) * 100 + 50, last + 1)
+        if cid > (1 << 48) - 1:
+            raise RuntimeError("client order ID exceeds protocol range")
+        self.db.execute("INSERT OR REPLACE INTO meta VALUES('last_client_id',?)", (str(cid),))
+        return cid
+
+    def next_client_id(self) -> int:
+        # Emergency closes share the ID counter, but never count as hedge fills.
+        with self.db:
+            return self._allocate_client_id()
 
     def settle(self, cid: int, filled: Decimal, note: str = "venue terminal order") -> None:
         row = self.db.execute("SELECT * FROM attempts WHERE id=?", (cid,)).fetchone()

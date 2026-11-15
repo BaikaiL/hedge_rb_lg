@@ -6,11 +6,12 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from .config import NotificationConfig
+from ..config import NotificationConfig
 
 _ACCOUNT_RE = re.compile(
     r"(?P<name>[A-Za-z0-9_.\-]+):\s*(?:(?P<flat>无仓位)|(?P<missing>数据缺失)|距强平 \$(?P<buf>-?[\d.]+))"
@@ -40,7 +41,7 @@ class Notifier:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
-                    logging.error("notification failed: %s", result)
+                    logging.error("notification failed: %s", type(result).__name__)
 
     @staticmethod
     def _post_json(url: str, payload: dict) -> None:
@@ -82,6 +83,8 @@ class LiveStatusPublisher:
     async def maybe_update(self, body: str) -> None:
         if not self.cfg.live_status_enabled:
             return
+        if not all(self.credentials()):
+            return
         now = time.monotonic()
         interval = float(self.cfg.live_status_interval_seconds)
         # Fire slightly early: the monitor loop only ticks every `poll_seconds`, so a strict
@@ -98,7 +101,7 @@ class LiveStatusPublisher:
             try:
                 await asyncio.to_thread(self.push, text)
             except Exception as exc:  # noqa: BLE001 - must never break the monitor loop
-                logging.warning("live status push failed: %s", exc)
+                logging.warning("live status push failed: %s", type(exc).__name__)
                 self._message_id = None
                 return
         self._last_text = text
@@ -109,16 +112,19 @@ class LiveStatusPublisher:
         Telegram keeps showing the *original send time* of an edited message, so the
         update counter and the explicit timestamp have to live in the body.
         """
-        stamp = time.strftime("%m-%d %H:%M:%S")
+        stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M:%S")
         refresh = self.sent_count + self.edit_count + 1
         interval = f"{float(self.cfg.live_status_interval_seconds):g}"
         lines = [
-            f"🔄 刷新 #{refresh} · 最后更新 {stamp}",
+            f"🔄 刷新 #{refresh} · 最后更新 {stamp}（北京时间）",
             f"（约每 {interval} 秒刷新一次；上方是 Telegram 的首次发送时间，不会变）",
         ]
         level_match = _LEVEL_RE.search(body)
         level = level_match.group("level") if level_match else "?"
-        header = f"🛡️ Hedge Guard ({self.mode_label}) · risk={level}"
+        header = f"🛡️ 自动对冲与保证金监控 ({self.mode_label}) · risk={level}"
+        hedge_match = re.search(r"hedging=([^;]+)", body)
+        if hedge_match:
+            header += f" · 对冲={hedge_match.group(1)}"
         if self.thresholds_text:
             header += f" · 阈值 {self.thresholds_text}"
         rows = list(_ACCOUNT_RE.finditer(body))

@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 
-from .config import MonitorConfig
+from ..config import MonitorConfig
 from .models import AccountSnapshot, GuardState, RiskDomain, RiskLevel
 
 
@@ -128,8 +128,7 @@ def evaluate(
 ) -> Decision:
     """按每个清算域各自的「离强平还有多远」判定，取最危险的那一档。
 
-    全仓（cross）域：账户级缓冲 = 权益 − 维持保证金，美元阈值（提醒/再提醒/平仓 = 80/55/30，
-    解除 95）。逐仓（isolated）腿：强平是价格事件，按距强平百分比（6/4.5/3，解除 7），
+    全仓（cross）域：账户级缓冲 = 权益 − 维持保证金，美元阈值来自配置。逐仓（isolated）腿：强平是价格事件，按距强平百分比（6/4.5/3，解除 7），
     与腿的规模、杠杆无关 —— 大额腿不会被固定美元数坑，小额腿也不会过早平仓。
 
     各域互不救济（权益不能互相调用），所以取最危险的域，绝不能相加 —— 一边亏钱的同时

@@ -10,18 +10,12 @@ from websockets.asyncio.client import connect
 from .config import Config
 from .control import Control
 from .engine import Engine
+from .errors import failure_reason
 from .exchange import Exchange, rows
+from .margin.guard import MarginGuard
 from .store import Store
 
 log = logging.getLogger(__name__)
-
-
-def failure_reason(exc: BaseException) -> str:
-    if isinstance(exc, BaseExceptionGroup):
-        return "; ".join(failure_reason(e) for e in exc.exceptions)
-    if type(exc) in (RuntimeError, ValueError, KeyError):
-        return str(exc)
-    return type(exc).__name__
 
 
 def identity(cfg: Config, live: bool) -> dict:
@@ -41,6 +35,7 @@ class Service:
         self.source, self.target = Exchange(cfg.source), Exchange(cfg.target)
         self.source.source_store = self.store
         self.engine = Engine(cfg, self.control, self.store, self.source, self.target, live)
+        self.margin = MarginGuard(cfg, self.control, self.store, self.source, self.target, live)
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self.source_ready, self.target_ready, self.synced = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self.resync = asyncio.Event()
@@ -48,7 +43,6 @@ class Service:
     async def start(self) -> None:
         await self.source.start()
         await self.target.start()
-        await self.engine.start()
 
     async def close(self) -> None:
         await asyncio.gather(self.source.close(), self.target.close(), return_exceptions=True)
@@ -187,8 +181,8 @@ class Service:
         while True:
             s = self.control.snapshot()
             if not s["paused"] and not self.control.ready(self.cfg.heartbeat_timeout):
-                self.control.pause("margin guard heartbeat absent/unhealthy/stale")
-                log.critical("hedging paused: margin guard heartbeat lost")
+                self.control.pause("built-in margin monitor heartbeat absent/unhealthy/stale")
+                log.critical("hedging paused: built-in margin monitor heartbeat lost")
             if self.synced.is_set() and self.source_ready.is_set() and self.target_ready.is_set():
                 missing_since = time.monotonic()
             elif not s["paused"] and time.monotonic() - missing_since > 30:
@@ -196,23 +190,51 @@ class Service:
                 log.critical("hedging paused: account stream/backfill unavailable")
             await asyncio.sleep(0.2)
 
+    async def hedge_supervisor(self) -> None:
+        # A trading/data failure must never cancel the built-in risk monitor.
+        while True:
+            try:
+                self.source_ready.clear()
+                self.target_ready.clear()
+                self.synced.clear()
+                await self.engine.start()
+                if self.store.uncertain():
+                    self.control.pause("recovering unresolved hedge submission")
+                    await self.engine.reconcile()
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(self.stream(self.source, True))
+                    tg.create_task(self.stream(self.target, False))
+                    tg.create_task(self.backfill_loop())
+                    tg.create_task(self.worker())
+                    tg.create_task(self.watchdog())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                reason = failure_reason(exc)
+                self.control.pause("hedging stopped: " + reason)
+                log.critical("hedging paused: %s; margin monitoring continues", reason)
+                self.margin.notify("对冲模块暂停", reason + "; 保证金监控和平仓功能继续运行")
+                await asyncio.sleep(5)
+
     async def run(self) -> None:
         try:
+            self.control.heartbeat(False)
             await self.start()
-            if self.store.uncertain():
-                self.control.pause("recovering unresolved hedge submission")
-                await self.engine.reconcile()
-            # Worker and backfill both mutate the ledger on this single event loop.
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(self.stream(self.source, True))
-                tg.create_task(self.stream(self.target, False))
-                tg.create_task(self.backfill_loop())
-                tg.create_task(self.worker())
-                tg.create_task(self.watchdog())
+                tg.create_task(self.margin.run_forever())
+                tg.create_task(self.margin.notification_loop())
+                tg.create_task(self.margin.status_loop())
+                tg.create_task(self.hedge_supervisor())
         except BaseException as exc:
             reason = failure_reason(exc)
             self.control.pause("hedger stopped: " + reason)
             log.critical("hedging paused: %s; reconcile exposure before resuming", reason)
+            if not isinstance(exc, asyncio.CancelledError):
+                try:
+                    await asyncio.wait_for(self.margin.notifier.send("自动对冲与保证金服务异常退出", reason), timeout=10)
+                except Exception:
+                    log.error("could not deliver service-failure notification")
             raise
         finally:
+            self.control.heartbeat(False)
             await self.close()

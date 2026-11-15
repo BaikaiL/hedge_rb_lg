@@ -1,5 +1,5 @@
 [state]
-# Both programs must use this SAME absolute directory on the VPS.
+# State for the single hedging + margin-monitor service.
 directory = "/var/lib/auto-hedge"
 
 [source]
@@ -19,7 +19,7 @@ private_key_env = "CORE_HEDGE_API_PRIVATE_KEY"
 [execution]
 enabled = false
 max_slippage_bps = 30         # 30 bps = 0.30%, referenced to target best bid/ask
-heartbeat_timeout_seconds = 35 # existing guard polls every 10s; allow read latency
+heartbeat_timeout_seconds = 35 # internal margin monitor polls every 10s
 backfill_seconds = 30
 confirm_timeout_seconds = 8   # total send + confirmation budget per hedge
 max_attempts = 3
@@ -30,3 +30,31 @@ max_backfill_pages = 100
 # Automatically hedge RH perpetual limit and non-reduce-only market fills.
 # Same-symbol/equal-multiplier Core contract; actual filled BASE quantity, no fixed size.
 auto = true
+
+# Migrated from the supplied lg_rh_margin_guard configuration.
+[monitor]
+poll_seconds = 10
+flatten_buffer_usd = 75.0
+critical_buffer_usd = 100.0
+warning_buffer_usd = 150.0
+recovery_buffer_usd = 175.0
+isolated_warning_distance_pct = 6.0
+isolated_critical_distance_pct = 4.5
+isolated_flatten_distance_pct = 3.0
+isolated_recovery_distance_pct = 7.0
+notification_cooldown_seconds = 300
+max_data_age_seconds = 45
+
+[margin_execution]
+max_slippage_pct = 2.0
+close_retry_rounds = 3
+verify_delay_seconds = 3
+cancel_open_orders = true
+order_timeout_seconds = 8
+
+[notifications]
+webhook_url_env = "HEDGE_GUARD_WEBHOOK_URL"
+telegram_bot_token_env = "TELEGRAM_BOT_TOKEN"
+telegram_chat_id_env = "TELEGRAM_CHAT_ID"
+live_status_enabled = true
+live_status_interval_seconds = 10

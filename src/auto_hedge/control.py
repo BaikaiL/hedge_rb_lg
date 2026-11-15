@@ -88,7 +88,7 @@ class Control:
             return dict(db.execute("SELECT * FROM control WHERE id=1").fetchone())
 
     def pause(self, reason: str) -> None:
-        # Persist first: the risk process can stop new sends before waiting for a lock.
+        # Persist first: risk handling stops new sends before waiting for a lock.
         with self.connect() as db:
             db.execute("UPDATE control SET paused=1, reason=? WHERE id=1", (reason,))
             db.execute("INSERT INTO control_events(at,action,reason) VALUES(?,?,?)",
@@ -98,7 +98,7 @@ class Control:
         with self.connect() as db:
             db.execute("UPDATE control SET heartbeat=?,healthy=? WHERE id=1", (time.time(), int(healthy)))
         if not healthy:
-            self.pause("margin guard is unhealthy or not in LIVE mode")
+            self.pause("built-in margin monitor is unhealthy or stale")
 
     def ready(self, timeout: float, epoch: int | None = None) -> bool:
         s = self.snapshot()
@@ -110,7 +110,7 @@ class Control:
             db.execute("BEGIN IMMEDIATE")
             s = db.execute("SELECT * FROM control WHERE id=1").fetchone()
             if not s["healthy"] or not 0 <= time.time() - s["heartbeat"] <= timeout:
-                raise RuntimeError("margin guard LIVE heartbeat is absent, unhealthy or stale")
+                raise RuntimeError("margin monitor heartbeat is absent, unhealthy or stale; start the service first")
             if not s["paused"]:
                 raise RuntimeError("already armed; pause before starting a new session")
             db.execute("UPDATE control SET paused=0,epoch=epoch+1,armed_ms=?,reason=? WHERE id=1",

@@ -1,1 +1,1 @@
-"""Robinhood Lighter -> Lighter Core fill hedger."""
+"""Single-service Robinhood Lighter hedging and dual-account margin protection."""

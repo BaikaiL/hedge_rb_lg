@@ -1,5 +1,5 @@
 [Unit]
-Description=Robinhood Lighter fill hedger
+Description=Robinhood Lighter hedging and dual-account margin protection
 After=network-online.target
 Wants=network-online.target
 
