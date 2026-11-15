@@ -4,10 +4,12 @@ import asyncio
 import logging
 import time
 from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 
 from .config import Config, Route
 from .control import Control, execution_lock
 from .exchange import Exchange
+from .errors import failure_reason
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -22,6 +24,30 @@ class Engine:
         self.routes = list(cfg.routes)
         self.unavailable: set[str] = set()
         self.dust_since: dict[tuple[str, int], float] = {}
+
+    def outcome_notice(self, symbol: str, cid: int, requested: Decimal,
+                       filled: Decimal, remaining: Decimal, *, reconciled: bool = False) -> tuple[str, str]:
+        if not self.live:
+            title = "🧪 DRY-RUN 对冲模拟完成（无真实订单）"
+        elif filled == 0:
+            title = "❌ Lighter 对冲失败（零成交）"
+        elif abs(filled) < abs(requested):
+            title = "⚠️ Lighter 对冲部分成交"
+        elif remaining:
+            title = "✅ Lighter 对冲订单成交（仍有剩余敞口）"
+        else:
+            title = "✅ Lighter 对冲完成"
+        if reconciled:
+            title += "（查单确认）"
+        direction = "卖出" if requested < 0 else "买入"
+        residual = "0" if not remaining else f"{'卖出' if remaining < 0 else '买入'} {abs(remaining):f}"
+        stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M:%S")
+        body = (f"时间：{stamp}（北京时间）\n模式：{'LIVE' if self.live else 'DRY-RUN'}\n合约：{symbol}\n方向：{direction}\n"
+                f"本单请求：{abs(requested):f} {symbol}\n实际成交：{abs(filled):f} {symbol}\n"
+                f"剩余待对冲：{residual} {symbol}\n客户端订单号：{cid}")
+        if reconciled and self.control.snapshot()["paused"]:
+            body += "\n自动对冲保持暂停，核对仓位后再恢复。"
+        return title, body
 
     async def start(self) -> None:
         self.source_markets, self.target_markets = await asyncio.gather(self.source.markets(), self.target.markets())
@@ -102,7 +128,10 @@ class Engine:
             route = next(r for r in self.routes if r.name == a["route"])
             filled = await self.target.terminal(a["id"], self.target_markets[route.target_symbol],
                                                 Decimal(a["requested"]), self.cfg.confirm_timeout)
-            self.store.settle(a["id"], filled)
+            requested = Decimal(a["requested"])
+            remaining = self.store.pending(route.name, a["epoch"]) - filled
+            self.store.settle(a["id"], filled, notification=self.outcome_notice(
+                route.target_symbol, a["id"], requested, filled, remaining, reconciled=True))
             log.warning("reconciled client_order_index=%s actual_fill=%s", a["id"], filled)
 
     async def hedge(self) -> None:
@@ -147,14 +176,26 @@ class Engine:
                         return
                     cid = self.store.new_attempt(route.name, epoch, signed)
                     if not self.live:
-                        self.store.settle(cid, signed, "DRY-RUN simulated; no target order")
+                        self.store.settle(cid, signed, "DRY-RUN simulated; no target order",
+                                          notification=self.outcome_notice(
+                                              m.symbol, cid, signed, signed, self.store.pending(route.name, epoch) - signed))
                         log.info("DRY-RUN route=%s signed_base=%s price_bound=%s", route.name, signed, cap)
                         continue
                     # Uncertain is durably written BEFORE the network send, including crash windows.
-                    async with asyncio.timeout(self.cfg.confirm_timeout):
-                        await self.target.submit(m, cid, signed, cap)
-                        filled = await self.target.terminal(cid, m, signed, self.cfg.confirm_timeout)
-                    self.store.settle(cid, filled)
+                    try:
+                        async with asyncio.timeout(self.cfg.confirm_timeout):
+                            await self.target.submit(m, cid, signed, cap)
+                            filled = await self.target.terminal(cid, m, signed, self.cfg.confirm_timeout)
+                    except Exception as exc:
+                        self.store.enqueue_notification(
+                            f"hedge:{cid}:unknown", "⚠️ Lighter 对冲结果未确认",
+                            f"合约：{m.symbol}\n方向：{'卖出' if signed < 0 else '买入'}\n"
+                            f"请求数量：{abs(signed):f} {m.symbol}\n客户端订单号：{cid}\n"
+                            f"原因：{failure_reason(exc)}\n实际成交量尚未确认，可能已经成交；程序将暂停并按原订单号查单，不自动重发。",
+                        )
+                        raise
+                    self.store.settle(cid, filled, notification=self.outcome_notice(
+                        m.symbol, cid, signed, filled, self.store.pending(route.name, epoch) - filled))
                     log.info("hedge route=%s client_id=%s requested=%s actual=%s", route.name, cid, signed, filled)
                     if not filled:
                         raise RuntimeError(f"{route.name}: IOC filled zero; price/liquidity/margin check required")

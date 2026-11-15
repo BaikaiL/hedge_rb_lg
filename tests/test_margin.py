@@ -289,6 +289,8 @@ def test_hedge_failure_does_not_stop_margin_monitoring(tmp_path):
             assert not task.done()
             assert reads >= 2
             assert service.control.snapshot()["paused"]
+            messages = service.store.pending_notifications()
+            assert any("对冲失败" in m["title"] and "hedge order failed" in m["body"] for m in messages)
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

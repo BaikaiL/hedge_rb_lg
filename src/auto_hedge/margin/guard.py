@@ -51,6 +51,18 @@ class MarginGuard:
             except Exception as exc:
                 log.error("notification failed: %s", failure_reason(exc))
 
+    async def hedge_notification_loop(self) -> None:
+        # Results survive restart and never compete with the bounded risk-alert queue.
+        while True:
+            for message in self.store.pending_notifications():
+                try:
+                    delivered = await self.notifier.send(message["title"], message["body"])
+                except Exception as exc:
+                    delivered = False
+                    log.error("hedge result notification failed: %s", failure_reason(exc))
+                self.store.notification_delivery(message["event_id"], bool(delivered))
+            await asyncio.sleep(1)
+
     async def status_loop(self) -> None:
         while True:
             state = self.control.snapshot()

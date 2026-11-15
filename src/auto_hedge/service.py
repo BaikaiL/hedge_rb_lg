@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -214,7 +215,18 @@ class Service:
                 reason = failure_reason(exc)
                 self.control.pause("hedging stopped: " + reason)
                 log.critical("hedging paused: %s; margin monitoring continues", reason)
-                self.margin.notify("对冲模块暂停", reason + "; 保证金监控和平仓功能继续运行")
+                epoch = self.control.snapshot()["epoch"]
+                fingerprint = hashlib.sha256(reason.encode()).hexdigest()[:16]
+                pending = []
+                for route in self.store.routes():
+                    amount = self.store.pending(route, epoch)
+                    if amount:
+                        pending.append(f"{route}: 待{'卖出' if amount < 0 else '买入'} {abs(amount):f}")
+                details = "\n未对冲敞口：\n" + "\n".join(pending) if pending else ""
+                self.store.enqueue_notification(
+                    f"hedge-error:{epoch}:{fingerprint}", "❌ 对冲失败或异常，自动对冲已暂停",
+                    reason + details + "\n保证金监控和平仓功能继续运行；核对实际订单和仓位后再恢复。",
+                )
                 await asyncio.sleep(5)
 
     async def run(self) -> None:
@@ -224,6 +236,7 @@ class Service:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self.margin.run_forever())
                 tg.create_task(self.margin.notification_loop())
+                tg.create_task(self.margin.hedge_notification_loop())
                 tg.create_task(self.margin.status_loop())
                 tg.create_task(self.hedge_supervisor())
         except BaseException as exc:

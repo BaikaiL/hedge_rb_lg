@@ -97,6 +97,7 @@ async def execute(args) -> None:
         state = control.snapshot()
         print(json.dumps({"mode": "LIVE" if cfg.enabled else "DRY-RUN", "control": state, "uncertain": store.uncertain(),
                           "margin": json.loads(store.get("margin_status") or "null"),
+                          "pending_result_notifications": store.unsent_notification_count(),
                           "pending_base": {r: str(store.pending(r, state["epoch"])) for r in store.routes()}}, ensure_ascii=False, indent=2))
     finally:
         store.close()

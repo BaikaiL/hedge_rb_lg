@@ -26,7 +26,7 @@ class Notifier:
     def __init__(self, cfg: NotificationConfig):
         self.cfg = cfg
 
-    async def send(self, title: str, body: str) -> None:
+    async def send(self, title: str, body: str) -> bool:
         logging.warning("%s | %s", title, body)
         tasks = []
         webhook = os.getenv(self.cfg.webhook_url_env, "").strip()
@@ -42,6 +42,8 @@ class Notifier:
             for result in results:
                 if isinstance(result, Exception):
                     logging.error("notification failed: %s", type(result).__name__)
+            return any(not isinstance(result, Exception) for result in results)
+        return False
 
     @staticmethod
     def _post_json(url: str, payload: dict) -> None:
@@ -54,7 +56,9 @@ class Notifier:
     def _post_form(url: str, payload: dict) -> None:
         data = urllib.parse.urlencode(payload).encode()
         with urllib.request.urlopen(url, data=data, timeout=10) as response:
-            response.read()
+            result = json.load(response)
+        if result.get("ok") is not True:
+            raise RuntimeError("Telegram did not accept the notification")
 
 
 class LiveStatusPublisher:

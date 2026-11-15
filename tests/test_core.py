@@ -303,3 +303,89 @@ def test_automatic_mode_ignores_pre_session_fills_in_expired_markets(setup):
     run(e.ingest(fill(market_id=999, timestamp=1)))
     e.source.markets.assert_not_called()
     e.target.submit.assert_not_called()
+
+
+def test_success_result_message_contains_confirmed_size_and_is_not_duplicated(setup):
+    e, c, s = setup
+    async def scenario():
+        await e.ingest(fill())
+        await e.hedge()
+        await e.ingest(fill())
+        await e.hedge()
+        messages = s.pending_notifications()
+        assert len(messages) == 1
+        assert "对冲完成" in messages[0]["title"]
+        assert "方向：卖出" in messages[0]["body"]
+        assert "实际成交：0.001 BTC" in messages[0]["body"]
+        assert "剩余待对冲：0 BTC" in messages[0]["body"]
+    run(scenario())
+
+
+def test_partial_result_message_is_not_reported_as_fully_hedged(setup):
+    e, c, s = setup
+    e.target.terminal.side_effect = [D("-0.0004"), D("-0.0006")]
+    async def scenario():
+        await e.ingest(fill())
+        await e.hedge()
+        messages = s.pending_notifications()
+        assert len(messages) == 2
+        assert "部分成交" in messages[0]["title"]
+        assert "对冲完成" not in messages[0]["title"]
+        assert "实际成交：0.0004 BTC" in messages[0]["body"]
+        assert "剩余待对冲：卖出 0.0006 BTC" in messages[0]["body"]
+        assert "对冲完成" in messages[1]["title"]
+        assert "实际成交：0.0006 BTC" in messages[1]["body"]
+    run(scenario())
+
+
+def test_zero_fill_notifies_failure_and_never_success(setup):
+    e, c, s = setup
+    e.target.terminal.side_effect = [D(0)]
+    async def scenario():
+        await e.ingest(fill())
+        with pytest.raises(RuntimeError, match="filled zero"):
+            await e.hedge()
+        messages = s.pending_notifications()
+        assert len(messages) == 1
+        assert "失败" in messages[0]["title"]
+        assert "零成交" in messages[0]["title"]
+        assert "实际成交：0 BTC" in messages[0]["body"]
+        assert not s.uncertain()
+    run(scenario())
+
+
+def test_timeout_alert_and_later_confirmation_use_same_order_id(setup):
+    e, c, s = setup
+    e.target.submit.side_effect = TimeoutError()
+    async def scenario():
+        await e.ingest(fill())
+        with pytest.raises(TimeoutError):
+            await e.hedge()
+        messages = s.pending_notifications()
+        assert len(messages) == 1
+        assert "未确认" in messages[0]["title"]
+        assert "可能已经成交" in messages[0]["body"]
+        cid = s.uncertain()[0]["id"]
+        assert str(cid) in messages[0]["body"]
+        await e.reconcile()
+        await e.reconcile()
+        messages = s.pending_notifications()
+        assert len(messages) == 1
+        assert "查单确认" in messages[0]["title"]
+        assert "对冲完成" in messages[0]["title"]
+        assert str(cid) in messages[0]["body"]
+        assert e.target.submit.call_count == 1
+    run(scenario())
+
+
+def test_paper_result_is_clearly_marked_as_simulated(setup):
+    e, c, s = setup
+    e.live = False
+    async def scenario():
+        await e.ingest(fill())
+        await e.hedge()
+        messages = s.pending_notifications()
+        assert "DRY-RUN" in messages[0]["title"]
+        assert "无真实订单" in messages[0]["title"]
+        e.target.submit.assert_not_called()
+    run(scenario())
