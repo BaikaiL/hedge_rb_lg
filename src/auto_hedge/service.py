@@ -32,7 +32,7 @@ class Service:
         self.cfg = cfg
         self.control = Control(cfg.state_dir)
         self.store = Store(cfg.state_dir, identity(cfg, live), "ledger.live.sqlite3" if live else "ledger.paper.sqlite3")
-        self.source, self.target = Exchange(cfg.source), Exchange(cfg.target)
+        self.source, self.target = Exchange(cfg.source, cfg.proxy_url), Exchange(cfg.target, cfg.proxy_url)
         self.source.source_store = self.store
         self.engine = Engine(cfg, self.control, self.store, self.source, self.target, live)
         self.margin = MarginGuard(cfg, self.control, self.store, self.source, self.target, live)
@@ -60,7 +60,8 @@ class Service:
                 self.synced.clear()
             try:
                 async with connect(exchange.account.ws_url, ping_interval=20, ping_timeout=20,
-                                   open_timeout=10, max_size=8 * 1024 * 1024) as ws:
+                                   open_timeout=10, max_size=8 * 1024 * 1024,
+                                   proxy=self.cfg.proxy_url if self.cfg.proxy_url else True) as ws:
                     token = exchange.token()
                     for channel in channels:
                         await ws.send(json.dumps({"type": "subscribe", "channel": channel, "auth": token}))

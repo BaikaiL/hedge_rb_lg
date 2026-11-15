@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 import aiohttp
 
 from .config import Account
+from .network import configure_proxy
 
 log = logging.getLogger(__name__)
 
@@ -48,24 +49,29 @@ class Market:
 
 
 class Exchange:
-    def __init__(self, account: Account):
+    def __init__(self, account: Account, proxy_url: str | None = None):
         self.account = account
+        self.proxy_url = proxy_url
         self.signer = None
         self.http = None
         self.order_cache: dict[str, dict] = {}
         self.source_store = None
 
     async def start(self) -> None:
+        configure_proxy(self.proxy_url)
         import lighter
         self.signer = lighter.SignerClient(
             url=self.account.url, chain_id=self.account.chain_id,
             account_index=self.account.index,
             api_private_keys={self.account.key_index: self.account.private_key()},
         )
+        if self.proxy_url:
+            self.signer.api_client.configuration.proxy = self.proxy_url
+            self.signer.api_client.rest_client.proxy = self.proxy_url
         error = await asyncio.to_thread(self.signer.check_client)
         if error:
             raise RuntimeError(f"API key validation failed for {self.account.url}")
-        self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
+        self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5), trust_env=True)
 
     async def close(self) -> None:
         if self.http:
@@ -82,7 +88,8 @@ class Exchange:
     async def get(self, endpoint: str, *, private=False, **params) -> dict:
         params = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in params.items() if v is not None}
         headers = {"authorization": self.token()} if private else {}
-        async with self.http.get(self.account.url + "/api/v1/" + endpoint, params=params, headers=headers) as r:
+        async with self.http.get(self.account.url + "/api/v1/" + endpoint, params=params, headers=headers,
+                                 proxy=self.proxy_url) as r:
             if r.status != 200:
                 # Do not log response bodies or request headers containing auth.
                 raise RuntimeError(f"{endpoint}: HTTP {r.status}")

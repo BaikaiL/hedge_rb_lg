@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rh-lighter-auto-hedge"
-version = "0.2.0"
+version = "0.2.1"
 description = "Single-service Robinhood Lighter hedging and dual-account margin protection"
 requires-python = ">=3.11"
 dependencies = [
   "lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@38a34672e7cb43c67d807ece25f125fda2dfdecf",
   "aiohttp>=3.9,<4",
-  "websockets>=14,<17",
+  "websockets>=15,<17",
   "python-dotenv>=1,<2",
 ]
 

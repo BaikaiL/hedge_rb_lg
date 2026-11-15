@@ -31,6 +31,10 @@ max_backfill_pages = 100
 # Same-symbol/equal-multiplier Core contract; actual filled BASE quantity, no fixed size.
 auto = true
 
+# For a local Clash HTTP/mixed proxy, uncomment and set the listening port.
+# [network]
+# proxy_url = "http://127.0.0.1:7897"
+
 # Migrated from the supplied lg_rh_margin_guard configuration.
 [monitor]
 poll_seconds = 10

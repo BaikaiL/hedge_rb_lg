@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
+from .network import validate_proxy
+
 
 @dataclass(frozen=True)
 class Account:
@@ -90,6 +92,7 @@ class Config:
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     margin_execution: MarginExecutionConfig = field(default_factory=MarginExecutionConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
+    proxy_url: str | None = None
 
 
 def load_config(path: str | Path) -> Config:
@@ -151,7 +154,9 @@ def load_config(path: str | Path) -> Config:
         monitor=MonitorConfig(**raw.get("monitor", {})),
         margin_execution=MarginExecutionConfig(**raw.get("margin_execution", {})),
         notifications=NotificationConfig(**raw.get("notifications", {})),
+        proxy_url=raw.get("network", {}).get("proxy_url") or None,
     )
+    validate_proxy(c.proxy_url)
     if not c.max_slippage_bps.is_finite() or not 0 < c.max_slippage_bps <= 1000:
         raise ValueError("max_slippage_bps must be in (0,1000]")
     if not (1 <= c.max_attempts <= 10 and 1 <= c.max_pages <= 1000

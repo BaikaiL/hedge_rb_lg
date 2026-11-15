@@ -15,11 +15,13 @@ from .config import load_config
 from .control import Control, FileLock, execution_lock
 from .service import Service, identity, failure_reason
 from .store import Store
+from .network import configure_proxy
 
 
 async def execute(args) -> None:
     load_dotenv(args.env_file, override=False)
     cfg = load_config(args.config)
+    configure_proxy(cfg.proxy_url)
     control = Control(cfg.state_dir)
     if args.action == "run":
         handler = RotatingFileHandler(cfg.state_dir / "auto-hedge.log", maxBytes=5 * 1024 * 1024,
